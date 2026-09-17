@@ -1589,11 +1589,11 @@
         const bgStyle = isTransparent ? '' : `background-color: ${bColor};`;
         const tooltipHtml = `<span class="${boxClass}" style="${bgStyle} color: ${tColor}; font-size: ${fSize}px;">${label}</span>`;
 
-        // ピンのサイズに応じて上にずらすオフセット量を計算（通常アイコンならサイズの半分+余白分持ち上げる）
-        let offsetPoint = [0, -10];
+        // アイコンの上端にぴったり接触するオフセット（隙間ゼロ）
+        let offsetPoint = [0, 0];
         if (layer instanceof L.Marker && !layer.isTextOnly) {
           const markerSize = parseInt(layer.customMarkerSize, 10) || 32;
-          offsetPoint = [0, -(markerSize / 2) - 6];
+          offsetPoint = [0, -(markerSize / 2)];
         }
 
         layer.bindTooltip(tooltipHtml, {
@@ -2251,8 +2251,8 @@
                 const tagW = textMetrics.width + (paddingX * 2);
                 const tagH = fontSize + (paddingY * 2);
                 const tagX = posX - (tagW / 2);
-                // アイコンの上端（drawY）からさらにタグの高さ＋余白分上に配置
-                const tagY = drawY - tagH - (6 * scale);  
+                // アイコン上端（drawY）からタグの高さ分だけ上に引く（接触位置）
+                const tagY = drawY - tagH;
 
                 if (!isTransparent) {
                   ctx.fillStyle = bgColor;
