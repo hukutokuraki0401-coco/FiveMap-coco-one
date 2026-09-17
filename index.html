@@ -1817,7 +1817,9 @@
         });
       }
     });
+ // ====================================================
     // 4. データ保存・復元（GeoJSON対応）
+    // ====================================================
     function buildGeoJsonObject() {
       const featureList = [];
       drawnItems.eachLayer(layer => {
@@ -1846,58 +1848,119 @@
       };
     }
 
-    async function restoreFromGeoJson(data) {
+    // ローカル用：GeoJSONから画面へ直接ピンや線を描画・復元する
+    function restoreFromGeoJson(data) {
       if (!data || !data.features) return;
 
-      // 1. Firebase に現在あるオブジェクトを全消去（全員の画面からクリア）
-      await mapObjectsRef.remove();
+      arrowHeadGroup.clearLayers();
+      drawnItems.clearLayers();
+      clearMarkerSelection();
+      const displayMode = document.getElementById('textDisplayMode').value;
 
-      // 2. data.json の各図形を Firebase へ一括投入
-      for (const feature of data.features) {
-        const p = feature.properties || {};
-        const geom = feature.geometry || {};
-        let objType = 'marker';
-        let latlng = null;
-        let latlngs = null;
-        let radius = null;
+      L.geoJSON(data, {
+        pointToLayer: function (feature, latlng) {
+          const props = feature.properties || {};
+          const isTextOnly = !!props.isTextOnly;
+          const iconType = props.iconType || 'pin';
+          const color = props.color || "#ff0000";
+          const textColor = props.textColor || "#000000";
+          const bgColor = props.bgColor || "#ffffff";
+          const size = props.markerSize || 32;
+          const fontSize = props.fontSize || 13;
+          const label = props.label || props.memo || "";
 
-        if (geom.type === 'Point') {
-          objType = 'marker';
-          // GeoJSON は [lng, lat] なので Leaflet の {lat, lng} に戻す
-          latlng = { lat: geom.coordinates[1], lng: geom.coordinates[0] };
-        } else if (geom.type === 'LineString') {
-          objType = 'polyline';
-          latlngs = geom.coordinates.map(c => ({ lat: c[1], lng: c[0] }));
-        } else if (geom.type === 'Polygon') {
-          objType = 'polygon';
-          latlngs = geom.coordinates[0].map(c => ({ lat: c[1], lng: c[0] }));
+          if (isTextOnly) {
+            const marker = L.marker(latlng, { icon: createTextOnlyIcon(label, textColor, bgColor, fontSize) });
+            marker.isTextOnly = true;
+            return marker;
+          } else {
+            return L.marker(latlng, { icon: createCustomShapeIcon(iconType, color, size) });
+          }
+        },
+        style: function (feature) {
+          const props = feature.properties || {};
+          return { 
+            color: props.color || "#ff0000",
+            weight: parseInt(props.lineWidth, 10) || 4,
+            lineCap: 'butt'
+          };
+        },
+        onEachFeature: function(feature, layer) {
+          const props = feature.properties || {};
+          layer.isTextOnly = !!props.isTextOnly;
+          layer.customIconType = props.iconType || 'pin';
+          layer.customLineType = props.lineType || 'line';
+          layer.customLineWidth = props.lineWidth || 4;
+          layer.customLabel = props.label || props.memo || "";
+          layer.customDetailMemo = props.detailMemo || "";
+          layer.customColor = props.color || "#ff0000";
+          layer.customTextColor = props.textColor || "#000000";
+          layer.customBgColor = props.bgColor || "#ffffff";
+          layer.customMarkerSize = props.markerSize || 32;
+          layer.customFontSize = props.fontSize || 13;
+
+          drawnItems.addLayer(layer);
+
+          if (layer instanceof L.Polyline && !(layer instanceof L.Polygon)) {
+            updatePolylineArrowHead(layer);
+          }
+
+          if (layer instanceof L.Marker && layer.dragging) {
+            layer.dragging.enable();
+          }
+
+          applyTextMode(layer, layer.customLabel, layer.customDetailMemo, layer.customTextColor, layer.customBgColor, layer.customFontSize, displayMode);
+        }
+      });
+    }
+
+    // ====================================================
+    // 5. フォルダ保存・復元処理
+    // ====================================================
+    async function saveToDirectory() {
+      if (!window.showDirectoryPicker) {
+        alert("お使いのブラウザはフォルダ直接保存に対応していません。ChromeまたはEdgeをご利用ください。");
+        return;
+      }
+
+      try {
+        const dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+
+        // 作図データの生成
+        const data = buildGeoJsonObject();
+
+        // マルチ互換対応：Base64データの場合は data.json を重くしないため空文字にし、URLのみ保存
+        if (currentMapImageDataUrl && !currentMapImageDataUrl.startsWith('data:')) {
+          data.currentMapImageUrl = currentMapImageDataUrl;
+        } else {
+          data.currentMapImageUrl = "";
         }
 
-        const syncData = {
-          type: objType,
-          latlng: latlng,
-          latlngs: latlngs,
-          radius: radius,
-          props: {
-            isTextOnly: !!p.isTextOnly,
-            iconType: p.iconType || 'pin',
-            lineType: p.lineType || 'line',
-            lineWidth: p.lineWidth || 4,
-            label: p.label || "",
-            detailMemo: p.detailMemo || "",
-            color: p.color || "#ff0000",
-            textColor: p.textColor || "#000000",
-            bgColor: p.bgColor || "#ffffff",
-            markerSize: p.markerSize || 32,
-            fontSize: p.fontSize || 13
-          }
-        };
+        const jsonFileHandle = await dirHandle.getFileHandle('data.json', { create: true });
+        const jsonWritable = await jsonFileHandle.createWritable();
+        await jsonWritable.write(JSON.stringify(data, null, 2));
+        await jsonWritable.close();
 
-        await mapObjectsRef.push(syncData);
+        // 画像本体を map_image.png として保存
+        if (currentMapImageDataUrl) {
+          try {
+            const res = await fetch(currentMapImageDataUrl);
+            const blob = await res.blob();
+            const imgFileHandle = await dirHandle.getFileHandle('map_image.png', { create: true });
+            const imgWritable = await imgFileHandle.createWritable();
+            await imgWritable.write(blob);
+            await imgWritable.close();
+          } catch (imgErr) {
+            console.warn("画像の書き出しをスキップしました:", imgErr);
+          }
+        }
+
+        alert(`フォルダ「${dirHandle.name}」へ作図・マップ設定を保存しました！`);
+      } catch (err) {
+        if (err.name !== 'AbortError') alert("フォルダ保存に失敗しました: " + err.message);
       }
     }
 
-// 5. フォルダ保存・復元処理
     async function loadFromDirectory() {
       if (!window.showDirectoryPicker) {
         alert("お使いのブラウザはフォルダ直接読み込みに対応していません。ChromeまたはEdgeをご利用ください。");
@@ -1938,7 +2001,7 @@
           loadMapImage(data.currentMapImageUrl);
         }
 
-        // 3. ピンや線などの作図データを復元
+        // 3. ピンや線などの作図データを画面に復元
         restoreFromGeoJson(data);
 
         alert(`フォルダ「${dirHandle.name}」から全データを復元しました！`);
