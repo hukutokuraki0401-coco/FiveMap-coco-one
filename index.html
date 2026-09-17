@@ -2031,19 +2031,28 @@
 
       const exportBtn = document.querySelector('.export-btn');
       const originalText = exportBtn.textContent;
-      exportBtn.textContent = '⏳ 全体画像生成中...';
+      exportBtn.textContent = '⏳ 高画質画像生成中...';
       exportBtn.disabled = true;
 
       try {
+        // ★ 高精細化のための解像度倍率（2倍で描画することで文字の輪郭がシャープになる）
+        const exportDpiScale = 2;
+
         const origW = currentImageOriginalWidth;
         const origH = currentImageOriginalHeight;
+
+        // 出力用キャンバスサイズを2倍に拡大
+        const targetW = origW * exportDpiScale;
+        const targetH = origH * exportDpiScale;
 
         const southWest = L.latLng(0, 0);
         const northEast = L.latLng(origH, origW);
         const ptSW = map.latLngToContainerPoint(southWest);
         const ptNE = map.latLngToContainerPoint(northEast);
         const screenImageWidth = Math.abs(ptNE.x - ptSW.x);
-        const scale = origW / screenImageWidth;
+        
+        // 拡大倍率に exportDpiScale を反映
+        const scale = (origW / screenImageWidth) * exportDpiScale;
 
         const baseImg = new Image();
         baseImg.crossOrigin = 'anonymous';
@@ -2054,9 +2063,14 @@
         });
 
         const canvas = document.createElement('canvas');
-        canvas.width = origW;
-        canvas.height = origH;
+        canvas.width = targetW;
+        canvas.height = targetH;
         const ctx = canvas.getContext('2d');
+
+        // ★ テキストや画像の描画品質を最高に設定
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.textRendering = 'optimizeLegibility';
 
         const formatSelect = document.getElementById('exportFormat');
         const mimeType = formatSelect.value;
@@ -2066,10 +2080,11 @@
 
         if (mimeType === 'image/jpeg') {
           ctx.fillStyle = '#ffffff';
-          ctx.fillRect(0, 0, origW, origH);
+          ctx.fillRect(0, 0, targetW, targetH);
         }
 
-        ctx.drawImage(baseImg, 0, 0, origW, origH);
+        // 背景マップ画像を2倍キャンバスに高品質リサイズ描画
+        ctx.drawImage(baseImg, 0, 0, targetW, targetH);
 
         const isTooltipMode = (document.getElementById('textDisplayMode').value === 'tooltip');
 
@@ -2107,8 +2122,8 @@
 
               ctx.beginPath();
               latlngs.forEach((ll, idx) => {
-                const x = ll.lng;
-                const y = origH - ll.lat;
+                const x = ll.lng * exportDpiScale;
+                const y = (origH - ll.lat) * exportDpiScale;
                 if (idx === 0) ctx.moveTo(x, y);
                 else ctx.lineTo(x, y);
               });
@@ -2121,10 +2136,10 @@
               if (layer.customLineType === 'arrow') {
                 const pEnd = latlngs[latlngs.length - 1];
                 const pPrev = latlngs[latlngs.length - 2];
-                const endX = pEnd.lng;
-                const endY = origH - pEnd.lat;
-                const prevX = pPrev.lng;
-                const prevY = origH - pPrev.lat;
+                const endX = pEnd.lng * exportDpiScale;
+                const endY = (origH - pEnd.lat) * exportDpiScale;
+                const prevX = pPrev.lng * exportDpiScale;
+                const prevY = (origH - pPrev.lat) * exportDpiScale;
 
                 const angle = Math.atan2(endY - prevY, endX - prevX);
                 const headLength = Math.max(16 * scale, weight * 4.5);
@@ -2149,8 +2164,8 @@
             if (latlngs && latlngs.length > 2) {
               ctx.beginPath();
               latlngs.forEach((ll, idx) => {
-                const x = ll.lng;
-                const y = origH - ll.lat;
+                const x = ll.lng * exportDpiScale;
+                const y = (origH - ll.lat) * exportDpiScale;
                 if (idx === 0) ctx.moveTo(x, y);
                 else ctx.lineTo(x, y);
               });
@@ -2163,9 +2178,9 @@
             }
           } else if (layer instanceof L.Circle) {
             const center = layer.getLatLng();
-            const radius = layer.getRadius();
-            const centerX = center.lng;
-            const centerY = origH - center.lat;
+            const radius = layer.getRadius() * exportDpiScale;
+            const centerX = center.lng * exportDpiScale;
+            const centerY = (origH - center.lat) * exportDpiScale;
 
             ctx.beginPath();
             ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
@@ -2183,8 +2198,8 @@
 
           if (layer instanceof L.Marker) {
             const pos = layer.getLatLng();
-            const posX = pos.lng;
-            const posY = origH - pos.lat;
+            const posX = pos.lng * exportDpiScale;
+            const posY = (origH - pos.lat) * exportDpiScale;
             const fontSize = (layer.customFontSize || 13) * scale;
             const textColor = layer.customTextColor || '#000000';
             const bgColor = layer.customBgColor || '#ffffff';
@@ -2214,7 +2229,7 @@
                 ctx.lineTo(posX + tagW, posY + tagH - r);
                 ctx.quadraticCurveTo(posX + tagW, posY + tagH, posX + tagW - r, posY + tagH);
                 ctx.lineTo(posX + r, posY + tagH);
-                ctx.quadraticCurveTo(posX, posY + tagH, posX, posY + tagH - r);
+                ctx.quadraticCurveTo(posX, posY + tagH, posX, tagY + tagH - r);
                 ctx.lineTo(posX, posY + r);
                 ctx.quadraticCurveTo(posX, posY, posX + r, posY);
                 ctx.closePath();
@@ -2251,8 +2266,8 @@
                 const tagW = textMetrics.width + (paddingX * 2);
                 const tagH = fontSize + (paddingY * 2);
                 const tagX = posX - (tagW / 2);
-                  // アイコン上端（drawY）から少し下へ引き下げて配置
-                const tagY = drawY - tagH + (4 * scale); // +4px分 下げる
+                // アイコン頭頂部に少し重なる位置
+                const tagY = drawY - tagH + (4 * scale);
 
                 if (!isTransparent) {
                   ctx.fillStyle = bgColor;
