@@ -2222,16 +2222,21 @@
                 ctx.strokeStyle = 'rgba(0, 0, 0, 0.2)';
                 ctx.lineWidth = 1 * scale;
                 const r = 4 * scale;
+
                 ctx.beginPath();
-                ctx.moveTo(posX + r, posY);
-                ctx.lineTo(posX + tagW - r, posY);
-                ctx.quadraticCurveTo(posX + tagW, posY, posX + tagW, posY + r);
-                ctx.lineTo(posX + tagW, posY + tagH - r);
-                ctx.quadraticCurveTo(posX + tagW, posY + tagH, posX + tagW - r, posY + tagH);
-                ctx.lineTo(posX + r, posY + tagH);
-                ctx.quadraticCurveTo(posX, posY + tagH, posX, tagY + tagH - r);
-                ctx.lineTo(posX, posY + r);
-                ctx.quadraticCurveTo(posX, posY, posX + r, posY);
+                if (ctx.roundRect) {
+                  ctx.roundRect(posX, posY, tagW, tagH, r);
+                } else {
+                  ctx.moveTo(posX + r, posY);
+                  ctx.lineTo(posX + tagW - r, posY);
+                  ctx.quadraticCurveTo(posX + tagW, posY, posX + tagW, posY + r);
+                  ctx.lineTo(posX + tagW, posY + tagH - r);
+                  ctx.quadraticCurveTo(posX + tagW, posY + tagH, posX + tagW - r, posY + tagH);
+                  ctx.lineTo(posX + r, posY + tagH);
+                  ctx.quadraticCurveTo(posX, posY + tagH, posX, posY + tagH - r);
+                  ctx.lineTo(posX, posY + r);
+                  ctx.quadraticCurveTo(posX, posY, posX + r, posY);
+                }
                 ctx.closePath();
                 ctx.fill();
                 ctx.stroke();
@@ -2274,16 +2279,23 @@
                   ctx.strokeStyle = 'rgba(0, 0, 0, 0.2)';
                   ctx.lineWidth = 1 * scale;
                   const r = 4 * scale;
+
                   ctx.beginPath();
-                  ctx.moveTo(tagX + r, tagY);
-                  ctx.lineTo(tagX + tagW - r, tagY);
-                  ctx.quadraticCurveTo(tagX + tagW, tagY, tagX + tagW, tagY + r);
-                  ctx.lineTo(tagX + tagW, tagY + tagH - r);
-                  ctx.quadraticCurveTo(tagX + tagW, tagY + tagH, posX + tagW - r, tagY + tagH);
-                  ctx.lineTo(tagX + r, tagY + tagH);
-                  ctx.quadraticCurveTo(tagX, tagY + tagH, posX, tagY + tagH - r);
-                  ctx.lineTo(tagX, tagY + r);
-                  ctx.quadraticCurveTo(tagX, tagY, posX + r, tagY);
+                  // ブラウザ標準の角丸四角形APIを使用
+                  if (ctx.roundRect) {
+                    ctx.roundRect(tagX, tagY, tagW, tagH, r);
+                  } else {
+                    // 互換用（すべて tagX, tagY で正しく計算）
+                    ctx.moveTo(tagX + r, tagY);
+                    ctx.lineTo(tagX + tagW - r, tagY);
+                    ctx.quadraticCurveTo(tagX + tagW, tagY, tagX + tagW, tagY + r);
+                    ctx.lineTo(tagX + tagW, tagY + tagH - r);
+                    ctx.quadraticCurveTo(tagX + tagW, tagY + tagH, tagX + tagW - r, tagY + tagH);
+                    ctx.lineTo(tagX + r, tagY + tagH);
+                    ctx.quadraticCurveTo(tagX, tagY + tagH, tagX, tagY + tagH - r);
+                    ctx.lineTo(tagX, tagY + r);
+                    ctx.quadraticCurveTo(tagX, tagY, tagX + r, tagY);
+                  }
                   ctx.closePath();
                   ctx.fill();
                   ctx.stroke();
