@@ -1593,7 +1593,7 @@
         let offsetPoint = [0, 0];
         if (layer instanceof L.Marker && !layer.isTextOnly) {
           const markerSize = parseInt(layer.customMarkerSize, 10) || 32;
-          offsetPoint = [0, -(markerSize / 2)];
+          offsetPoint = [0, -(markerSize / 2)+ 4];
         }
 
         layer.bindTooltip(tooltipHtml, {
@@ -2251,8 +2251,8 @@
                 const tagW = textMetrics.width + (paddingX * 2);
                 const tagH = fontSize + (paddingY * 2);
                 const tagX = posX - (tagW / 2);
-                // アイコン上端（drawY）からタグの高さ分だけ上に引く（接触位置）
-                const tagY = drawY - tagH;
+                  // アイコン上端（drawY）から少し下へ引き下げて配置
+                const tagY = drawY - tagH + (4 * scale); // +4px分 下げる
 
                 if (!isTransparent) {
                   ctx.fillStyle = bgColor;
