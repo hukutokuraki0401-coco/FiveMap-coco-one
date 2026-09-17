@@ -1907,83 +1907,36 @@
       try {
         const dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
 
-        // 作図データ + 現在のマップURLをまとめて保存
+        // 作図データの生成
         const data = buildGeoJsonObject();
-        data.currentMapImageUrl = currentMapImageDataUrl || ""; // 現在のマップ情報も記録
+
+        // 【ここを変更】
+        // Base64データ（data:image/...）の場合は data.json に書き込まず空文字にする
+        // （通常のWeb URLの場合のみURLを保持する）
+        if (currentMapImageDataUrl && !currentMapImageDataUrl.startsWith('data:')) {
+          data.currentMapImageUrl = currentMapImageDataUrl;
+        } else {
+          data.currentMapImageUrl = "";
+        }
 
         const jsonFileHandle = await dirHandle.getFileHandle('data.json', { create: true });
         const jsonWritable = await jsonFileHandle.createWritable();
         await jsonWritable.write(JSON.stringify(data, null, 2));
         await jsonWritable.close();
 
-        // 画像のローカル保存（CORSエラーで全体が落ちないように安全に処理）
+        // 画像本体は map_image.png として保存される
         if (currentMapImageDataUrl) {
-          try {
-            const res = await fetch(currentMapImageDataUrl);
-            if (res.ok) {
-              const blob = await res.blob();
-              const imgFileHandle = await dirHandle.getFileHandle('map_image.png', { create: true });
-              const imgWritable = await imgFileHandle.createWritable();
-              await imgWritable.write(blob);
-              await imgWritable.close();
-            }
-          } catch (imgErr) {
-            console.warn("外部マップ画像の直接保存はスキップされました（URLはdata.jsonに保存済みです）:", imgErr);
-          }
+          const res = await fetch(currentMapImageDataUrl);
+          const blob = await res.blob();
+          const imgFileHandle = await dirHandle.getFileHandle('map_image.png', { create: true });
+          const imgWritable = await imgFileHandle.createWritable();
+          await imgWritable.write(blob);
+          await imgWritable.close();
         }
 
-        alert(`フォルダ「${dirHandle.name}」へ作図・マップ設定を保存しました！`);
+        alert(`フォルダ「${dirHandle.name}」へ保存が完了しました！`);
       } catch (err) {
         if (err.name !== 'AbortError') alert("フォルダ保存に失敗しました: " + err.message);
-      }
-    }
-
-    async function loadFromDirectory() {
-      if (!window.showDirectoryPicker) {
-        alert("お使いのブラウザはフォルダ直接読み込みに対応していません。ChromeまたはEdgeをご利用ください。");
-        return;
-      }
-
-      try {
-        const dirHandle = await window.showDirectoryPicker();
-
-        // 1. 作図データ（data.json）を読み込む
-        const jsonFileHandle = await dirHandle.getFileHandle('data.json');
-        const jsonFile = await jsonFileHandle.getFile();
-        const jsonText = await jsonFile.text();
-        const data = JSON.parse(jsonText);
-
-        // 2. マップ画像の復元と全員への同期
-        let mapLoaded = false;
-
-        // フォルダ内に保存された画像ファイルがある場合は優先して読み込む
-        try {
-          const imgFileHandle = await dirHandle.getFileHandle('map_image.png');
-          const imgFile = await imgFileHandle.getFile();
-          const reader = new FileReader();
-          reader.onload = function(e) { 
-            const localDataUrl = e.target.result;
-            loadMapImage(localDataUrl);
-          };
-          reader.readAsDataURL(imgFile);
-          mapLoaded = true;
-        } catch (e) {
-          // 画像ファイルが直接ない場合はスキップ
-        }
-
-        // data.json にマップURLが記録されている場合はそれを復元し、全員の画面も切り替える
-        if (data.currentMapImageUrl) {
-          loadMapImage(data.currentMapImageUrl);
-          db.ref('current_map_image').set(data.currentMapImageUrl); // 他の人にも同期
-          mapLoaded = true;
-        }
-
-        // 3. ピンや線などの作図データを復元
-        restoreFromGeoJson(data);
-
-        alert(`フォルダ「${dirHandle.name}」から作戦データを復元しました！`);
-      } catch (err) {
-        if (err.name !== 'AbortError') alert("復元に失敗しました: " + err.message);
       }
     }
 
