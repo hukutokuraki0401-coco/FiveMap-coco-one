@@ -288,12 +288,14 @@
   </style>
 </head>
 <body>
-
+  
   <div id="toolbar">
+    <!-- マップ画像切り替え -->
     <label style="cursor: pointer;">
       🗺️ マップ画像変更  │ 
       <input type="file" id="imageLoader" accept="image/*" style="display: none;">
     </label>
+    
 
     <!-- 現在選択中のアイコン形状 -->
     <label style="display: flex; align-items: center; gap: 4px;">
@@ -773,8 +775,11 @@
         // 1. 平面画像用マップの初期化
     const map = L.map('map', {
       crs: L.CRS.Simple,
-      minZoom: -2,
-      maxZoom: 2,
+      minZoom: -3,
+      maxZoom: 3,
+      zoomDelta: 0.25, // ボタン1回で動くズーム量
+      zoomSnap: 0.25,  // ズームの刻み幅
+      wheelPxPerZoomLevel: 120, // マウスホイールでの拡大縮小も滑らかにする
       closePopupOnClick: false
     });
 
@@ -1632,6 +1637,7 @@
       const selectedLineType = document.getElementById('lineTypeSelect').value;
       const displayMode = document.getElementById('textDisplayMode').value;
 
+      // 保存（data.json）用のカスタムプロパティを付与（マルチ版と共通形式）
       layer.isTextOnly = false;
       layer.customColor = selectedColor;
       layer.customTextColor = selectedTextColor;
@@ -1648,7 +1654,6 @@
       } else if (type === 'polyline') {
         layer.setStyle({ color: selectedColor, weight: parseInt(selectedLineWidth, 10) || 4, lineCap: 'butt' });
       } else if (layer.setStyle) {
-        // 多角形・四角形・円に色を適用
         layer.setStyle({ 
           color: selectedColor,
           fillColor: selectedColor,
@@ -1662,6 +1667,7 @@
       layer.customLabel = label || "";
       layer.customDetailMemo = memo || "";
 
+      // 画面へ追加
       drawnItems.addLayer(layer);
 
       if (type === 'polyline') {
@@ -1679,9 +1685,11 @@
       }
     });
 
-    // 3. マップ画像読み込み
+// 3. マップ画像読み込み（リセット・再センタリング対応版）
     function loadMapImage(src) {
+      if (!src) return;
       const img = new Image();
+      img.crossOrigin = 'anonymous'; // キャッシュ・CORS対策
       img.onload = function() {
         const w = this.width;
         const h = this.height;
@@ -1689,15 +1697,39 @@
         currentImageOriginalHeight = h;
         const bounds = [[0, 0], [h, w]];
 
-        if (currentOverlay) map.removeLayer(currentOverlay);
+        // 古い画像レイヤーを確実に破棄
+        if (currentOverlay) {
+          map.removeLayer(currentOverlay);
+          currentOverlay = null;
+        }
 
+        // 新しい画像をマップに追加
         currentOverlay = L.imageOverlay(src, bounds).addTo(map);
-        map.fitBounds(bounds);
         currentMapImageDataUrl = src;
+
+        // 画像の端から端までがぴったり画面に収まるようにカメラを強制移動
+        map.setMaxBounds(bounds);
+        map.fitBounds(bounds, { animate: false });
+
+        // 画像の上にピンや図形が隠れないよう、作図レイヤーを手前に再配置
+        if (map.hasLayer(drawnItems)) {
+          drawnItems.bringToFront();
+        }
+        if (map.hasLayer(arrowHeadGroup)) {
+          arrowHeadGroup.eachLayer(function(layer) {
+            if (layer.bringToFront) layer.bringToFront();
+          });
+        }
+
+        console.log("🗺️ マップ画像を更新・再センタリングしました:", w, "x", h);
+      };
+      img.onerror = function() {
+        console.error("画像の読み込みに失敗しました。URLを確認してください:", src);
       };
       img.src = src;
     }
 
+    //マップ画像の更新
     document.getElementById('imageLoader').addEventListener('change', function(e) {
       const file = e.target.files[0];
       if (file) {
@@ -1707,8 +1739,84 @@
       }
     });
 
+    // 初期マップ画像の指定
     loadMapImage('https://placehold.jp/30/333344/ffffff/1920x1080.png?text=Select+Your+Map+Image');
 
+    // ====================================================
+    // マッププリセット・同期管理
+    // ====================================================
+    const driveMapsRef = db.ref('drive_map_presets');
+
+    // URLの入力補正（GoogleドライブのURLが入ってきた場合も可能な限り生画像リンクへ変換）
+    function formatMapUrl(inputUrl) {
+      if (!inputUrl) return "";
+      let url = inputUrl.trim();
+
+      // Googleドライブ形式のURLの場合
+      const match = url.match(/\/d\/([a-zA-Z0-9_-]+)/) || url.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+      if (match && match[1]) {
+        return `https://lh3.googleusercontent.com/d/${match[1]}=s0`;
+      }
+      return url;
+    }
+
+    // 「➕ 画像を追加」ボタン処理
+    function promptAddNewDriveMap() {
+      const mapName = prompt("マップの表示名を入力してください:\n(例: ロスサントス高画質、カヨ・ペリコ島)");
+      if (!mapName) return;
+
+      const inputUrl = prompt(
+        "画像のURLまたはパスを入力してください:\n" +
+        "・GitHubに置いたファイル: ./map.png\n" +
+        "・GoogleドライブやWeb上の画像: URLをそのまま貼り付け"
+      );
+      if (!inputUrl) return;
+
+      const targetUrl = formatMapUrl(inputUrl);
+
+      // Firebase にプリセット登録
+      const newMapKey = driveMapsRef.push();
+      newMapKey.set({
+        name: mapName,
+        url: targetUrl,
+        createdAt: Date.now()
+      }).then(() => {
+        // 追加と同時にそのマップへ切り替え（全員へ通知）
+        db.ref('current_map_image').set(targetUrl);
+        loadMapImage(targetUrl);
+      }).catch(err => {
+        alert("登録に失敗しました: " + err.message);
+      });
+    }
+
+    // プルダウンでマップを変更したときの処理
+    function changeSelectedMap(url) {
+      if (!url) return;
+      // 自分の画面を切り替え
+      loadMapImage(url);
+      // 他のメンバー全員に通知
+      db.ref('current_map_image').set(url);
+    }
+
+    // 登録されたマップ一覧をリアルタイム同期してプルダウンを更新
+    driveMapsRef.on('value', function(snapshot) {
+      const select = document.getElementById('mapSelectDropdown');
+      const data = snapshot.val();
+      select.innerHTML = '<option value="">-- マップを選択 --</option>';
+
+      if (data) {
+        Object.keys(data).forEach(key => {
+          const item = data[key];
+          const opt = document.createElement('option');
+          opt.value = item.url;
+          opt.textContent = item.name;
+          if (item.url === currentMapImageDataUrl) {
+            opt.selected = true;
+          }
+          select.appendChild(opt);
+        });
+      }
+    });
     // 4. データ保存・復元（GeoJSON対応）
     function buildGeoJsonObject() {
       const featureList = [];
@@ -1738,70 +1846,58 @@
       };
     }
 
-    function restoreFromGeoJson(data) {
-      arrowHeadGroup.clearLayers();
-      drawnItems.clearLayers();
-      clearMarkerSelection();
-      const displayMode = document.getElementById('textDisplayMode').value;
+    async function restoreFromGeoJson(data) {
+      if (!data || !data.features) return;
 
-      L.geoJSON(data, {
-        pointToLayer: function (feature, latlng) {
-          const props = feature.properties || {};
-          const isTextOnly = !!props.isTextOnly;
-          const iconType = props.iconType || 'pin';
-          const color = props.color || "#ff0000";
-          const textColor = props.textColor || "#000000";
-          const bgColor = props.bgColor || "#ffffff";
-          const size = props.markerSize || 32;
-          const fontSize = props.fontSize || 13;
-          const label = props.label || props.memo || "";
+      // 1. Firebase に現在あるオブジェクトを全消去（全員の画面からクリア）
+      await mapObjectsRef.remove();
 
-          if (isTextOnly) {
-            const marker = L.marker(latlng, { icon: createTextOnlyIcon(label, textColor, bgColor, fontSize) });
-            marker.isTextOnly = true;
-            return marker;
-          } else {
-            return L.marker(latlng, { icon: createCustomShapeIcon(iconType, color, size) });
-          }
-        },
-        style: function (feature) {
-          const props = feature.properties || {};
-          return { 
-            color: props.color || "#ff0000",
-            weight: parseInt(props.lineWidth, 10) || 4,
-            lineCap: 'butt'
-          };
-        },
-        onEachFeature: function(feature, layer) {
-          const props = feature.properties || {};
-          layer.isTextOnly = !!props.isTextOnly;
-          layer.customIconType = props.iconType || 'pin';
-          layer.customLineType = props.lineType || 'line';
-          layer.customLineWidth = props.lineWidth || 4;
-          layer.customLabel = props.label || props.memo || "";
-          layer.customDetailMemo = props.detailMemo || "";
-          layer.customColor = props.color || "#ff0000";
-          layer.customTextColor = props.textColor || "#000000";
-          layer.customBgColor = props.bgColor || "#ffffff";
-          layer.customMarkerSize = props.markerSize || 32;
-          layer.customFontSize = props.fontSize || 13;
+      // 2. data.json の各図形を Firebase へ一括投入
+      for (const feature of data.features) {
+        const p = feature.properties || {};
+        const geom = feature.geometry || {};
+        let objType = 'marker';
+        let latlng = null;
+        let latlngs = null;
+        let radius = null;
 
-          drawnItems.addLayer(layer);
-
-          if (layer instanceof L.Polyline && !(layer instanceof L.Polygon)) {
-            updatePolylineArrowHead(layer);
-          }
-
-          if (layer instanceof L.Marker && layer.dragging) {
-            layer.dragging.enable();
-          }
-
-          applyTextMode(layer, layer.customLabel, layer.customDetailMemo, layer.customTextColor, layer.customBgColor, layer.customFontSize, displayMode);
+        if (geom.type === 'Point') {
+          objType = 'marker';
+          // GeoJSON は [lng, lat] なので Leaflet の {lat, lng} に戻す
+          latlng = { lat: geom.coordinates[1], lng: geom.coordinates[0] };
+        } else if (geom.type === 'LineString') {
+          objType = 'polyline';
+          latlngs = geom.coordinates.map(c => ({ lat: c[1], lng: c[0] }));
+        } else if (geom.type === 'Polygon') {
+          objType = 'polygon';
+          latlngs = geom.coordinates[0].map(c => ({ lat: c[1], lng: c[0] }));
         }
-      });
+
+        const syncData = {
+          type: objType,
+          latlng: latlng,
+          latlngs: latlngs,
+          radius: radius,
+          props: {
+            isTextOnly: !!p.isTextOnly,
+            iconType: p.iconType || 'pin',
+            lineType: p.lineType || 'line',
+            lineWidth: p.lineWidth || 4,
+            label: p.label || "",
+            detailMemo: p.detailMemo || "",
+            color: p.color || "#ff0000",
+            textColor: p.textColor || "#000000",
+            bgColor: p.bgColor || "#ffffff",
+            markerSize: p.markerSize || 32,
+            fontSize: p.fontSize || 13
+          }
+        };
+
+        await mapObjectsRef.push(syncData);
+      }
     }
 
-    // 5. フォルダ保存・復元処理
+// 5. フォルダ保存・復元処理
     async function saveToDirectory() {
       if (!window.showDirectoryPicker) {
         alert("お使いのブラウザはフォルダ直接保存に対応していません。ChromeまたはEdgeをご利用ください。");
@@ -1811,22 +1907,32 @@
       try {
         const dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
 
+        // 作図データ + 現在のマップURLをまとめて保存
         const data = buildGeoJsonObject();
+        data.currentMapImageUrl = currentMapImageDataUrl || ""; // 現在のマップ情報も記録
+
         const jsonFileHandle = await dirHandle.getFileHandle('data.json', { create: true });
         const jsonWritable = await jsonFileHandle.createWritable();
         await jsonWritable.write(JSON.stringify(data, null, 2));
         await jsonWritable.close();
 
+        // 画像のローカル保存（CORSエラーで全体が落ちないように安全に処理）
         if (currentMapImageDataUrl) {
-          const res = await fetch(currentMapImageDataUrl);
-          const blob = await res.blob();
-          const imgFileHandle = await dirHandle.getFileHandle('map_image.png', { create: true });
-          const imgWritable = await imgFileHandle.createWritable();
-          await imgWritable.write(blob);
-          await imgWritable.close();
+          try {
+            const res = await fetch(currentMapImageDataUrl);
+            if (res.ok) {
+              const blob = await res.blob();
+              const imgFileHandle = await dirHandle.getFileHandle('map_image.png', { create: true });
+              const imgWritable = await imgFileHandle.createWritable();
+              await imgWritable.write(blob);
+              await imgWritable.close();
+            }
+          } catch (imgErr) {
+            console.warn("外部マップ画像の直接保存はスキップされました（URLはdata.jsonに保存済みです）:", imgErr);
+          }
         }
 
-        alert(`フォルダ「${dirHandle.name}」へ保存が完了しました！`);
+        alert(`フォルダ「${dirHandle.name}」へ作図・マップ設定を保存しました！`);
       } catch (err) {
         if (err.name !== 'AbortError') alert("フォルダ保存に失敗しました: " + err.message);
       }
@@ -1841,22 +1947,41 @@
       try {
         const dirHandle = await window.showDirectoryPicker();
 
-        try {
-          const imgFileHandle = await dirHandle.getFileHandle('map_image.png');
-          const imgFile = await imgFileHandle.getFile();
-          const reader = new FileReader();
-          reader.onload = function(e) { loadMapImage(event.target.result); };
-          reader.readAsDataURL(imgFile);
-        } catch (e) {}
-
+        // 1. 作図データ（data.json）を読み込む
         const jsonFileHandle = await dirHandle.getFileHandle('data.json');
         const jsonFile = await jsonFileHandle.getFile();
         const jsonText = await jsonFile.text();
         const data = JSON.parse(jsonText);
 
+        // 2. マップ画像の復元と全員への同期
+        let mapLoaded = false;
+
+        // フォルダ内に保存された画像ファイルがある場合は優先して読み込む
+        try {
+          const imgFileHandle = await dirHandle.getFileHandle('map_image.png');
+          const imgFile = await imgFileHandle.getFile();
+          const reader = new FileReader();
+          reader.onload = function(e) { 
+            const localDataUrl = e.target.result;
+            loadMapImage(localDataUrl);
+          };
+          reader.readAsDataURL(imgFile);
+          mapLoaded = true;
+        } catch (e) {
+          // 画像ファイルが直接ない場合はスキップ
+        }
+
+        // data.json にマップURLが記録されている場合はそれを復元し、全員の画面も切り替える
+        if (data.currentMapImageUrl) {
+          loadMapImage(data.currentMapImageUrl);
+          db.ref('current_map_image').set(data.currentMapImageUrl); // 他の人にも同期
+          mapLoaded = true;
+        }
+
+        // 3. ピンや線などの作図データを復元
         restoreFromGeoJson(data);
 
-        alert(`フォルダ「${dirHandle.name}」から全データを復元しました！`);
+        alert(`フォルダ「${dirHandle.name}」から作戦データを復元しました！`);
       } catch (err) {
         if (err.name !== 'AbortError') alert("復元に失敗しました: " + err.message);
       }
@@ -2164,6 +2289,14 @@
         drawnItems.removeLayer(layer);
       });
     }
+
+// ====================================================
+    // Firebase 受信同期（他の人の操作・自分の操作を画面に反映）
+    // ====================================================
+    // 自分がオブジェクトを削除したときに Firebase からも消す
+    drawnItems.on('layerremove', function(e) {
+      const layer = e.layer;
+    });
   </script>
 </body>
 </html>
