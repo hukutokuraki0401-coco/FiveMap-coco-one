@@ -1588,9 +1588,18 @@
         const boxClass = isTransparent ? 'unified-tag-transparent' : 'unified-tag-box';
         const bgStyle = isTransparent ? '' : `background-color: ${bColor};`;
         const tooltipHtml = `<span class="${boxClass}" style="${bgStyle} color: ${tColor}; font-size: ${fSize}px;">${label}</span>`;
+
+        // ピンのサイズに応じて上にずらすオフセット量を計算（通常アイコンならサイズの半分+余白分持ち上げる）
+        let offsetPoint = [0, -10];
+        if (layer instanceof L.Marker && !layer.isTextOnly) {
+          const markerSize = parseInt(layer.customMarkerSize, 10) || 32;
+          offsetPoint = [0, -(markerSize / 2) - 6];
+        }
+
         layer.bindTooltip(tooltipHtml, {
           permanent: true,
           direction: 'top',
+          offset: offsetPoint, // ← ここで上方向に持ち上げる
           className: 'custom-unified-label'
         });
       }
@@ -2242,7 +2251,8 @@
                 const tagW = textMetrics.width + (paddingX * 2);
                 const tagH = fontSize + (paddingY * 2);
                 const tagX = posX - (tagW / 2);
-                const tagY = drawY - tagH - (4 * scale);
+                // アイコンの上端（drawY）からさらにタグの高さ＋余白分上に配置
+                const tagY = drawY - tagH - (6 * scale);  
 
                 if (!isTransparent) {
                   ctx.fillStyle = bgColor;
